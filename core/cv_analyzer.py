@@ -2,10 +2,9 @@ import google.generativeai as genai
 from config import GOOGLE_API_KEY
 from typing import Dict, Optional
 import json
-import logging 
+import logging
 
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 def analisar_cv(texto_cv: str) -> Optional[Dict]:
     """
@@ -15,17 +14,11 @@ def analisar_cv(texto_cv: str) -> Optional[Dict]:
     if not GOOGLE_API_KEY:
         logging.error("ERRO: GOOGLE_API_KEY não configurado no arquivo .env ou config.py.")
         return None
-    
+
     try:
         genai.configure(api_key=GOOGLE_API_KEY)
 
-        generation_config = genai.types.GenerationConfig(
-            response_mime_type="application/json"
-        )
-        model = genai.GenerativeModel(
-            "gemini-1.5-flash",
-            generation_config=generation_config
-        )
+        model = genai.GenerativeModel("gemini-1.5-flash")
 
         prompt = f"""
         Aja como um recrutador generalista sênior, com experiência em diversas áreas de atuação.
@@ -50,15 +43,21 @@ def analisar_cv(texto_cv: str) -> Optional[Dict]:
         """
 
         logging.info("Analisando o CV com a API Gemini...")
-        response = model.generate_content(prompt)
-        
-        json_text = response.text
-        
+
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "response_mime_type": "application/json"
+            }
+        )
+
+        # Tenta pegar o texto
+        json_text = response.text or response.candidates[0].content.parts[0].text
+
         dados_analisados = json.loads(json_text)
         return dados_analisados
-    
+
     except json.JSONDecodeError as e:
-        
         logging.error(f"ERRO ao decodificar o JSON: {e}")
         logging.error(f"Texto recebido da API que causou o erro: {json_text}")
         return None
