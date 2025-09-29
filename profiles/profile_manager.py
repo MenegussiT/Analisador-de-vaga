@@ -5,10 +5,10 @@ from typing import Dict, Optional
 
 DB_PATH = "bot_database.db"
 def inicializar_banco():
-    """Cria a tabela e adiciona colunas ausentes se necessário."""
+
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
-        # Cria tabela caso não exista
+      
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS perfis (
             user_id INTEGER PRIMARY KEY,
@@ -18,11 +18,10 @@ def inicializar_banco():
         """)
         conn.commit()
 
-        # Verifica colunas existentes
+      
         cursor.execute("PRAGMA table_info(perfis);")
         existing_cols = {row[1] for row in cursor.fetchall()}
 
-        # Adiciona colunas novas se não existirem
         for col in ("nome", "sobrenome", "telefone"):
             if col not in existing_cols:
                 cursor.execute(f"ALTER TABLE perfis ADD COLUMN {col} TEXT DEFAULT ''")
@@ -30,10 +29,10 @@ def inicializar_banco():
 
 
 def _normalize_phone(telefone: str) -> str:
-    """Retira tudo que não é dígito e mantem '+' se existir no início (opcional)."""
+    
     if not telefone:
         return ""
-    # Remove espaços e caracteres não numéricos (mantendo + no começo)
+   
     telefone = telefone.strip()
     if telefone.startswith("+"):
         digits = re.sub(r"\D", "", telefone[1:])
@@ -41,30 +40,27 @@ def _normalize_phone(telefone: str) -> str:
     return re.sub(r"\D", "", telefone)
 
 def _validar_telefone(telefone: str) -> bool:
-    """Validação simples: entre 8 e 15 dígitos (após normalizar)."""
+    
     if not telefone:
         return False
     t = _normalize_phone(telefone)
-    # Remove leading + para contagem:
+  
     t_digits = t[1:] if t.startswith("+") else t
     return 8 <= len(t_digits) <= 15
 
 def salvar_perfil(user_id: int, perfil: Dict):
-    """
-    Salva ou atualiza o perfil. Faz merge com valores existentes para não sobrescrever campos não fornecidos.
-    Espera que `perfil` possa conter: cargo_ideal, habilidades_chave (list), nome, sobrenome, telefone.
-    """
+   
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
-        # Buscar existente (se houver) para fazer merge seguro
+       
         cursor.execute("SELECT cargo_ideal, habilidades_chave, nome, sobrenome, telefone FROM perfis WHERE user_id = ?;", (user_id,))
         existente = cursor.fetchone()
 
-        # Recupera/mescla campos
+        
         cargo = perfil.get("cargo_ideal") if perfil.get("cargo_ideal") is not None else (existente["cargo_ideal"] if existente else "")
-        # habilidades: aceitar lista nova ou manter existente
+        
         if "habilidades_chave" in perfil:
             habilidades = perfil.get("habilidades_chave") or []
         else:
@@ -78,7 +74,7 @@ def salvar_perfil(user_id: int, perfil: Dict):
         telefone_raw = perfil.get("telefone") or (existente["telefone"] if existente else "")
         telefone = _normalize_phone(telefone_raw)
 
-        # Inserir ou substituir a linha (com todos os campos)
+        
         cursor.execute("""
             INSERT OR REPLACE INTO perfis (user_id, cargo_ideal, habilidades_chave, nome, sobrenome, telefone)
             VALUES (?, ?, ?, ?, ?, ?);
@@ -86,7 +82,7 @@ def salvar_perfil(user_id: int, perfil: Dict):
         conn.commit()
 
 def carregar_perfil(user_id: int) -> Optional[Dict]:
-    """Carrega e retorna o perfil completo (ou None)."""
+  
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
@@ -106,9 +102,8 @@ def carregar_perfil(user_id: int) -> Optional[Dict]:
             }
     return None
 
-# Função utilitária de fluxo via console (exemplo). Se o "chat" for um bot, adapte os prompts
 def cadastrar_via_chat_console(user_id: int):
-    """Exemplo de fluxo interativo no console. Em um bot, substitua por handlers."""
+    
     print("Vou cadastrar suas informações de contato. Se quiser pular, enter vazio.")
     nome = input("Nome: ").strip()
     sobrenome = input("Sobrenome: ").strip()
@@ -127,7 +122,6 @@ def cadastrar_via_chat_console(user_id: int):
     print("Cadastro atualizado com sucesso.")
     return True
 
-# Função para debug
 def listar_perfis():
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
