@@ -122,6 +122,7 @@ def cadastrar_via_chat_console(user_id: int):
     print("Cadastro atualizado com sucesso.")
     return True
 
+
 def listar_perfis():
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
