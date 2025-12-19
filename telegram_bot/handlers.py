@@ -1,29 +1,77 @@
-
 import io
-from telegram import Update
+import json
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
-# Importa as funções principais 
+# Importa as funções principais
 from core.pdf_parser import extrair_texto_pdf
 from core.cv_analyzer import analisar_cv
 from core.job_scraper import buscar_vagas
-from profiles.profile_manager import salvar_perfil, _validar_telefone 
+from profiles.profile_manager import salvar_perfil, _validar_telefone, carregar_perfil
 
 # --- DEFINIÇÃO DOS ESTADOS DA CONVERSA ---
-
-AGUARDANDO_NOME, AGUARDANDO_SOBRENOME, AGUARDANDO_TELEFONE, AGUARDANDO_LOCALIZACAO = range(4)
+# Adicionamos ESCOLHER_ACAO para o menu de botões
+AGUARDANDO_NOME, AGUARDANDO_SOBRENOME, AGUARDANDO_TELEFONE, AGUARDANDO_LOCALIZACAO, ESCOLHER_ACAO = range(5)
 
 # --- FUNÇÕES DO FLUXO DE CONVERSA ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Inicia a interação e aguarda o envio do CV."""
-    await update.message.reply_text(
-        "Olá! Sou seu assistente de busca de vagas.\n\n"
-        "Para começar, por favor, envie seu currículo em formato PDF. "
-        "A qualquer momento, você pode digitar /cancelar para encerrar nossa conversa."
-    )
-    # A conversa não avança de estado aqui, ela é iniciada por outro handler (receber_cv)
-    return ConversationHandler.END # Usamos END aqui para não iniciar um estado de conversa sem um CV.
+    """
+    Inicia a interação.
+    Verifica se o usuário já tem perfil salvo. Se sim, oferece menu. Se não, pede CV.
+    """
+    user_id = update.effective_user.id
+    perfil_existente = carregar_perfil(user_id)
+
+    if perfil_existente:
+        # Salva no contexto para uso imediato se ele escolher buscar vagas
+        context.user_data['perfil'] = perfil_existente
+        
+        nome = perfil_existente.get('nome', 'Candidato')
+        cargo = perfil_existente.get('cargo_ideal', 'N/A')
+
+        msg = (
+            f"Olá de novo, *{nome}*! 👋\n"
+            f"Encontrei seu perfil salvo para o cargo de *{cargo}*.\n\n"
+            "O que você deseja fazer hoje?"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("🔍 Buscar Vagas (Usar perfil salvo)", callback_data="acao_buscar")],
+            [InlineKeyboardButton("📄 Enviar Novo Currículo", callback_data="acao_novo_cv")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(msg, reply_markup=reply_markup, parse_mode='Markdown')
+        return ESCOLHER_ACAO
+    else:
+        # Usuário novo
+        await update.message.reply_text(
+            "Olá! Sou seu assistente de busca de vagas.\n\n"
+            "Para começar, por favor, envie seu currículo em formato PDF. "
+            "A qualquer momento, você pode digitar /cancelar para encerrar."
+        )
+        return ConversationHandler.END # Retorna END para permitir que o MessageHandler de PDF pegue o arquivo
+
+async def botao_acao_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Lida com o clique nos botões do menu inicial."""
+    query = update.callback_query
+    await query.answer() # Confirma o clique para parar o 'loading' no botão
+
+    if query.data == "acao_buscar":
+        # Pula direto para a pergunta da localização
+        await query.edit_message_text(
+            "Ótimo! Vamos usar seus dados salvos.\n\n"
+            "Para onde deseja buscar as vagas? (ex: Rio de Janeiro, Remoto, São Paulo)"
+        )
+        return AGUARDANDO_LOCALIZACAO
+
+    elif query.data == "acao_novo_cv":
+        await query.edit_message_text(
+            "Entendido. Por favor, envie o *novo arquivo PDF* do seu currículo.",
+            parse_mode='Markdown'
+        )
+        return ConversationHandler.END # Encerra este estado para deixar o handler de PDF (receber_cv) assumir
 
 async def receber_cv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Processa o CV, salva o perfil inicial e pede o nome."""
@@ -44,9 +92,22 @@ async def receber_cv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await update.message.reply_text("❌ Erro: A análise do currículo falhou. Tente novamente mais tarde.")
             return ConversationHandler.END
         
-        # Salva o perfil extraído pela IA (cargo e habilidades)
+        # Salva o perfil extraído pela IA
         salvar_perfil(user_id, perfil_ia)
-        context.user_data['perfil'] = perfil_ia # Guarda no contexto para a busca de vagas
+        context.user_data['perfil'] = perfil_ia 
+
+        # Verifica se o usuário já tinha nome/telefone salvos para não perguntar de novo se for apenas atualização de CV
+        perfil_banco = carregar_perfil(user_id)
+        if perfil_banco and perfil_banco.get('nome') and perfil_banco.get('telefone'):
+             # Se já tem cadastro completo, só avisa e vai pra localização
+             # Atualiza o contexto com os dados completos do banco (que agora tem o cargo novo da IA + nome antigo)
+             context.user_data['perfil'] = carregar_perfil(user_id)
+             await update.message.reply_text(
+                f"Currículo atualizado! Novo cargo detectado: *{perfil_ia.get('cargo_ideal')}*.\n"
+                f"Como já tenho seus dados, informe a *localização* para a busca.",
+                parse_mode='Markdown'
+             )
+             return AGUARDANDO_LOCALIZACAO
 
         await update.message.reply_text(
             f"Análise concluída! Cargo ideal identificado: *{perfil_ia.get('cargo_ideal', 'N/A')}*\n\n"
@@ -55,7 +116,7 @@ async def receber_cv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         await update.message.reply_text("Qual é o seu *primeiro nome*?", parse_mode='Markdown')
         
-        return AGUARDANDO_NOME # Avança para o próximo estado
+        return AGUARDANDO_NOME 
 
     except Exception as e:
         print(f"Erro crítico ao processar o CV: {e}")
@@ -95,7 +156,7 @@ async def receber_telefone(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if not _validar_telefone(telefone):
         await update.message.reply_text("❌ Telefone inválido. Por favor, tente novamente no formato (XX) XXXXX-XXXX ou digite /pular.")
-        return AGUARDANDO_TELEFONE # Permanece no mesmo estado para nova tentativa
+        return AGUARDANDO_TELEFONE 
 
     salvar_perfil(user_id, {"telefone": telefone})
     
@@ -122,7 +183,7 @@ async def receber_localizacao_e_buscar(update: Update, context: ContextTypes.DEF
     perfil = context.user_data.get('perfil')
 
     if not perfil or 'cargo_ideal' not in perfil:
-        await update.message.reply_text("❌ Algo deu errado, não encontrei seu perfil. Por favor, comece novamente enviando seu CV.")
+        await update.message.reply_text("❌ Algo deu errado, não encontrei seu perfil. Por favor, digite /start e comece novamente.")
         return ConversationHandler.END
 
     cargo = perfil['cargo_ideal']
@@ -132,24 +193,25 @@ async def receber_localizacao_e_buscar(update: Update, context: ContextTypes.DEF
 
     if vagas:
         lista_vagas_texto = []
-        for vaga in vagas[:5]: # Limita a 5 vagas para não poluir o chat
+        for vaga in vagas[:5]: 
+            # Parse HTML para evitar erros com caracteres especiais em links
             vaga_formatada = (
-                f"*{vaga['titulo']}*\n"
-                f"_{vaga['empresa']}_\n"
+                f"<b>{vaga['titulo']}</b>\n"
+                f"<i>{vaga['empresa']}</i>\n"
                 f"📍 {vaga['local']}\n"
-                f"[Ver Vaga]({vaga['link']})"
+                f"<a href='{vaga['link']}'>Ver Vaga</a>"
             )
             lista_vagas_texto.append(vaga_formatada)
         
         separador = "\n\n" + ("-" * 25) + "\n\n"
         corpo_mensagem = separador.join(lista_vagas_texto)
-        mensagem_final = f"✅ Busca finalizada! Encontrei {len(vagas)} vagas. Aqui estão as 5 principais:\n\n{corpo_mensagem}"
+        mensagem_final = f"✅ Busca finalizada! Aqui estão as 5 principais:\n\n{corpo_mensagem}"
         
-        await update.message.reply_text(mensagem_final, parse_mode='Markdown', disable_web_page_preview=True)
+        await update.message.reply_text(mensagem_final, parse_mode='HTML', disable_web_page_preview=True)
     else:
         await update.message.reply_text("😕 Nenhuma vaga encontrada para os critérios informados.")
 
-    await update.message.reply_text("Busca encerrada. Se quiser fazer uma nova busca, basta me enviar outro currículo!")
+    await update.message.reply_text("Busca encerrada. Digite /start se quiser fazer uma nova busca!")
     
     return ConversationHandler.END
 
